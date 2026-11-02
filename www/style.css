@@ -115,7 +115,7 @@ a { color: inherit; }
   position: sticky;
   bottom: 0;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   background: var(--paper);
   border-top: 1px solid var(--rule);
 }
@@ -203,6 +203,28 @@ textarea { width: 100%; height: 120px; font: 12px/1.4 ui-monospace, monospace; r
 .grade.again { border-color: var(--bad); color: var(--bad); }
 .grade.good { border-color: var(--good); color: var(--good); }
 .grades.two { grid-template-columns: repeat(2, 1fr); }
+
+/* Lire */
+.hero-group { display: flex; flex-direction: column; gap: 4px; }
+.hero-group .btn-link { align-self: center; padding: 0 12px; }
+.read-domains { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.read-domain {
+  min-height: 56px;
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.25;
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-left: 3px solid oklch(var(--dom-l) var(--dom-c) var(--h, 40));
+  border-radius: 6px;
+}
+.reading-context { color: var(--muted); font: 16px/1.45 var(--serif); }
+.reading-title { font: 700 28px/1.2 var(--serif); }
+.read-goal { color: var(--muted); font-size: 14px; text-align: center; }
+.reading-wait { padding: 16px; color: var(--muted); font-family: var(--serif); }
+.card-links .inline-action { color: var(--accent); }
 
 /* Fin de session */
 .finish { flex: 1; padding: 48px 16px 24px; display: flex; flex-direction: column; gap: 20px; }

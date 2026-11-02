@@ -9,6 +9,7 @@ export function defaultData() {
     wikiCards: {},
     wikiPool: [],
     wikiSeen: {},
+    readSeen: {},
     suspended: {},
     daily: {},
     pace: { review: 16, new: 42 },

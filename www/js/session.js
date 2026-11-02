@@ -202,10 +202,12 @@ export function logDay(data, today, { seconds = 0, answered = 0, correct = 0 }) 
   day.ok += correct;
 }
 
+export const isActiveDay = (entry) => entry?.n > 0 || entry?.read > 0;
+
 export function currentStreak(daily, today) {
-  let day = daily[today]?.n > 0 ? today : today - 1;
+  let day = isActiveDay(daily[today]) ? today : today - 1;
   let streak = 0;
-  while (daily[day]?.n > 0) {
+  while (isActiveDay(daily[day])) {
     streak += 1;
     day -= 1;
   }

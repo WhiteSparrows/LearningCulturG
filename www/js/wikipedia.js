@@ -94,7 +94,19 @@ function shuffled(list, rng) {
   return copy;
 }
 
-export async function fetchWikiCards(domain, seen, { count = 5, rng = Math.random, fetchFn = fetch } = {}) {
+// Pour la lecture : l'introduction entière en paragraphes, coupée si elle s'éternise.
+function introParagraphs(extract, maxChars = 1800) {
+  const paragraphs = [];
+  let length = 0;
+  for (const paragraph of extract.split(/\n+/).map((p) => p.trim()).filter(Boolean)) {
+    if (paragraphs.length > 0 && length + paragraph.length > maxChars) break;
+    paragraphs.push(paragraph);
+    length += paragraph.length;
+  }
+  return paragraphs;
+}
+
+export async function fetchWikiCards(domain, seen, { count = 5, long = false, rng = Math.random, fetchFn = fetch } = {}) {
   const project = domain.wiki[Math.floor(rng() * domain.wiki.length)];
   const level = rng() < 0.5 ? 'maximum' : 'élevée';
   const topics = await topicsFrom(project, level, rng, fetchFn);
@@ -105,7 +117,7 @@ export async function fetchWikiCards(domain, seen, { count = 5, rng = Math.rando
     prop: 'extracts|pageimages|description',
     exintro: '1',
     explaintext: '1',
-    exsentences: '4',
+    ...(long ? {} : { exsentences: '4' }),
     exlimit: String(titles.length),
     piprop: 'thumbnail',
     pithumbsize: '480',
@@ -115,7 +127,7 @@ export async function fetchWikiCards(domain, seen, { count = 5, rng = Math.rando
 
   return Object.values(json.query?.pages ?? {})
     .filter((p) => p.pageid && isGoodTopic(p.title, p.extract) && !seen[`wiki-${p.pageid}`])
-    .map((p) => toCard(p, domain.id))
+    .map((p) => ({ ...toCard(p, domain.id), ...(long ? { body: introParagraphs(p.extract) } : {}) }))
     .slice(0, count);
 }
 

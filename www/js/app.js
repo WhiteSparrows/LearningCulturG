@@ -2,20 +2,24 @@ import { DECK } from './deck.js';
 import { DOMAINS, domainById } from './domains.js';
 import { preview, formatInterval, schedule } from './fsrs.js';
 import {
-  buildPlan, Session, applyGrade, logDay, currentStreak, averageRecall, updatePace, dayNumber, dateFromDay,
+  buildPlan, Session, applyGrade, logDay, currentStreak, averageRecall, updatePace, dayNumber, dateFromDay, isActiveDay,
 } from './session.js';
+import { pickFact, markRead, keepForReview } from './reading.js';
 import { load, save, exportData, importData } from './store.js';
-import { refillPool, fetchOnThisDay } from './wikipedia.js';
+import { refillPool, fetchOnThisDay, fetchWikiCards } from './wikipedia.js';
 import { canRemind, setReminder } from './platform.js';
 
 const root = document.getElementById('app');
 const BONUS_SECONDS = 300;
 const MAX_STEP_SECONDS = 90;
 const ACTIVITY_WEEKS = 16;
+const MAX_READ_SECONDS = 240;
+const ARTICLE_WAIT_MS = 2500;
 
 let data = load();
 let screen = 'home';
 let run = null;
+let reading = null;
 
 const today = () => dayNumber();
 const allCards = () => [...DECK, ...Object.values(data.wikiCards)];
@@ -30,7 +34,7 @@ function h(tag, props = {}, ...children) {
     else if (key in node && key !== 'list') node[key] = value;
     else node.setAttribute(key, value);
   }
-  node.append(...children.flat().filter((c) => c !== null && c !== undefined && c !== false));
+  node.append(...children.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false));
   return node;
 }
 
@@ -77,11 +81,14 @@ function goTo(next, { replace = false } = {}) {
 window.addEventListener('popstate', (event) => {
   screen = event.state?.screen ?? 'home';
   if (screen !== 'session') run = null;
+  if (screen !== 'reading') stopReading();
   render();
 });
 
 function render() {
   if (screen === 'session' && run) return renderStep();
+  if (screen === 'reading' && reading) return renderReading();
+  if (screen === 'read') return renderRead();
   if (screen === 'domains') return renderDomains();
   if (screen === 'settings') return renderSettings();
   return renderHome();
@@ -93,7 +100,7 @@ function tabs(current) {
     'aria-current': current === id ? 'page' : null,
     onclick: () => current !== id && goTo(id, { replace: true }),
   }, label);
-  return h('nav', { class: 'tabs' }, tab('home', "Aujourd'hui"), tab('domains', 'Domaines'), tab('settings', 'Réglages'));
+  return h('nav', { class: 'tabs' }, tab('home', "Aujourd'hui"), tab('read', 'Lire'), tab('domains', 'Domaines'), tab('settings', 'Réglages'));
 }
 
 // ---- Accueil --------------------------------------------------------------
@@ -148,7 +155,7 @@ function renderActivity() {
   const first = now - mondayIndex - (ACTIVITY_WEEKS - 1) * 7;
   const days = Array.from({ length: ACTIVITY_WEEKS * 7 }, (_, i) => {
     const day = first + i;
-    const state = day > now ? 'future' : data.daily[day]?.n > 0 ? 'on' : '';
+    const state = day > now ? 'future' : isActiveDay(data.daily[day]) ? 'on' : '';
     return h('i', { class: state });
   });
   return h('section', {},
@@ -189,7 +196,10 @@ function renderHome() {
   show(
     h('div', { class: 'page' },
       h('header', { class: 'masthead' }, h('span', { class: 'brand' }, 'CulturG'), h('span', { class: 'today-date' }, date)),
-      renderHero(),
+      h('div', { class: 'hero-group' },
+        renderHero(),
+        h('button', { class: 'btn-link', onclick: () => goTo('read', { replace: true }) }, 'Juste lire, sans questions'),
+      ),
       renderFigures(),
       renderEphemeris(),
       renderActivity(),
@@ -436,6 +446,181 @@ function renderFinish() {
   ));
 }
 
+// ---- Lire -----------------------------------------------------------------
+
+function renderRead() {
+  const start = (domain) => () => startReading(domain);
+  const chips = DOMAINS.map((domain) => h('button', {
+    class: 'read-domain',
+    style: `--h:${domain.hue}`,
+    onclick: start(domain.id),
+  }, domain.label));
+  show(
+    h('div', { class: 'page' },
+      h('header', {},
+        h('h1', { class: 'page-title' }, 'Lire'),
+        h('p', { class: 'page-intro' }, 'Ni question ni note : des savoirs à parcourir à ton rythme. Rien ne s\'ajoute à tes révisions, sauf ce que tu choisis de retenir.'),
+      ),
+      h('button', { class: 'btn btn-primary', onclick: start(null) }, 'Surprends-moi'),
+      h('section', {},
+        h('h2', { class: 'section-title' }, 'Ou choisis un domaine'),
+        h('div', { class: 'read-domains' }, chips),
+      ),
+    ),
+    tabs('read'),
+  );
+}
+
+// On attend brièvement le premier article ; passé ce délai, un savoir hors ligne prend le relais.
+async function startReading(domain) {
+  const session = { domain, current: null, articles: [], loading: false, turn: 0, startedAt: Date.now(), waiting: true };
+  reading = session;
+  goTo('reading');
+  await Promise.race([loadArticles(), new Promise((resolve) => setTimeout(resolve, ARTICLE_WAIT_MS))]);
+  if (reading !== session) return;
+  session.waiting = false;
+  showNextReading();
+  renderReading();
+}
+
+// Sans domaine choisi, de petits lots : deux articles de suite, puis on change de sujet.
+async function loadArticles() {
+  if (!reading || reading.loading || reading.articles.length >= 3 || !data.settings.wiki) return;
+  const session = reading;
+  const choices = session.domain ? [domainById[session.domain]] : DOMAINS.filter((d) => !data.settings.disabled.includes(d.id));
+  const domain = choices[Math.floor(Math.random() * choices.length)];
+  if (!domain) return;
+  session.loading = true;
+  let added = 0;
+  try {
+    const cards = await fetchWikiCards(domain, data.wikiSeen, { long: true, count: session.domain ? 4 : 2 });
+    const known = new Set([...session.articles.map((c) => c.id), session.current?.id]);
+    const fresh = cards.filter((c) => !known.has(c.id));
+    session.articles.push(...fresh);
+    added = fresh.length;
+  } catch {
+    // Hors connexion : les savoirs intégrés suffisent.
+  }
+  session.loading = false;
+  if (added > 0) loadArticles();
+}
+
+// Hors connexion, la réserve de devinettes sert d'articles.
+function nextArticle() {
+  if (reading.articles.length > 0) return reading.articles.shift();
+  if (navigator.onLine !== false) return null;
+  return data.wikiPool.find((c) => !reading.domain || c.domain === reading.domain) ?? null;
+}
+
+// Surtout des articles de fond, avec un savoir court de temps en temps pour varier le rythme.
+function showNextReading() {
+  const previous = reading.current;
+  const wantArticle = reading.turn % 3 !== 2;
+  reading.turn += 1;
+  const fact = () => pickFact(DECK, data, { domain: reading.domain, lastDomain: previous?.domain });
+  reading.current = (wantArticle && nextArticle()) || fact() || nextArticle();
+  reading.startedAt = Date.now();
+  loadArticles();
+}
+
+function recordReading() {
+  if (!reading?.current) return;
+  const seconds = Math.min(MAX_READ_SECONDS, (Date.now() - reading.startedAt) / 1000);
+  markRead(data, reading.current, today(), seconds);
+  persist();
+}
+
+function stopReading() {
+  if (!reading) return;
+  recordReading();
+  reading = null;
+  refillInBackground();
+}
+
+function renderReading() {
+  if (reading.waiting) {
+    show(h('div', { class: 'session' },
+      h('div', { class: 'session-bar' }, h('button', { class: 'close', 'aria-label': 'Arrêter de lire', onclick: () => history.back() }, '×')),
+      h('p', { class: 'reading-wait' }, 'Je cherche de quoi lire…'),
+    ));
+    return;
+  }
+  const card = reading.current;
+  if (!card) {
+    show(h('div', { class: 'finish' },
+      h('h1', {}, 'Plus rien à lire ici'),
+      h('p', { class: 'explain' }, 'Tous les domaines sont désactivés ou toutes leurs cartes sont signalées.'),
+      h('div', { class: 'spacer' }),
+      h('button', { class: 'btn btn-primary', onclick: () => history.back() }, 'Retour'),
+    ));
+    return;
+  }
+  const goal = data.settings.minutes * 60;
+  const readToday = data.daily[today()]?.readSecs ?? 0;
+  const kept = Boolean(data.cards[card.id]);
+  const keep = h('button', {
+    class: 'inline-action',
+    onclick: (event) => {
+      keepForReview(data, card, today());
+      persist();
+      event.target.replaceWith(h('span', {}, 'Ajouté à tes révisions'));
+    },
+  }, 'Retenir');
+
+  show(h('div', { class: 'session' },
+    h('div', { class: 'session-bar' },
+      h('button', { class: 'close', 'aria-label': 'Arrêter de lire', onclick: () => history.back() }, '×'),
+      h('div', { class: 'progress' }, h('i', { style: `width:${Math.min(100, Math.round((readToday / goal) * 100))}%` })),
+    ),
+    h('article', { class: 'card enter', style: hueStyle(card.domain) },
+      domainTag(card.domain),
+      card.wiki ? readingArticle(card) : readingFact(card),
+      h('div', { class: 'card-links' },
+        card.wiki
+          ? h('a', { href: card.url, target: '_blank', rel: 'noopener' }, 'Lire la suite sur Wikipédia')
+          : h('button', {
+            onclick: () => {
+              data.suspended[card.id] = 'flag';
+              showNextReading();
+              persist();
+              renderReading();
+            },
+          }, 'Signaler une erreur'),
+        kept ? h('span', {}, 'Dans tes révisions') : keep,
+      ),
+    ),
+    h('div', { class: 'actions' },
+      readToday >= goal && h('p', { class: 'read-goal' }, `Tes ${data.settings.minutes} minutes sont faites. Continue si tu en as envie.`),
+      h('button', {
+        class: 'btn btn-primary',
+        onclick: () => {
+          recordReading();
+          showNextReading();
+          renderReading();
+        },
+      }, 'Suivant'),
+    ),
+  ));
+}
+
+function readingArticle(card) {
+  const paragraphs = card.body ?? [card.x];
+  return [
+    card.image && h('img', { class: 'card-image', src: card.image, alt: '', loading: 'lazy', onerror: (e) => e.target.remove() }),
+    h('h1', { class: 'reading-title' }, card.a),
+    card.description && h('p', { class: 'description' }, capitalize(card.description)),
+    paragraphs.map((text) => h('p', { class: 'explain' }, text)),
+  ];
+}
+
+function readingFact(card) {
+  return [
+    h('p', { class: 'reading-context' }, card.q),
+    h('h1', { class: 'reading-title' }, card.a),
+    h('p', { class: 'explain' }, card.x),
+  ];
+}
+
 // ---- Domaines -------------------------------------------------------------
 
 function renderDomains() {
@@ -632,7 +817,7 @@ function loadEphemeris() {
 
 // L'app reste ouverte d'un jour à l'autre sur un téléphone : on rafraîchit au retour.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible' || screen === 'session') return;
+  if (document.visibilityState !== 'visible' || screen === 'session' || screen === 'reading') return;
   loadEphemeris();
   render();
 });
