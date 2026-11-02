@@ -226,6 +226,17 @@ textarea { width: 100%; height: 120px; font: 12px/1.4 ui-monospace, monospace; r
 .reading-wait { padding: 16px; color: var(--muted); font-family: var(--serif); }
 .card-links .inline-action { color: var(--accent); }
 
+/* Approfondir */
+.deep-button { min-height: 48px; margin-top: 4px; }
+.ephemeris-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0 20px; }
+.deep-sections { border-top: 1px solid var(--rule); margin-top: 8px; }
+.deep-sections details { border-bottom: 1px solid var(--rule); }
+.deep-sections summary { min-height: 52px; padding: 14px 0; font: 600 17px/1.35 var(--serif); cursor: pointer; }
+.deep-sections details[open] { padding-bottom: 12px; }
+.deep-sections .explain { margin-bottom: 12px; }
+.deep-sections h3 { margin: 16px 0 6px; font-size: 15px; font-weight: 700; }
+.deep-source { color: var(--muted); font-size: 13px; }
+
 /* Fin de session */
 .finish { flex: 1; padding: 48px 16px 24px; display: flex; flex-direction: column; gap: 20px; }
 .finish h1 { font: 700 34px/1.15 var(--serif); }

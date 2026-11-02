@@ -26,6 +26,7 @@ test('chaque carte est complète, avec trois mauvaises réponses différentes', 
     assert.ok(card.q.trim().endsWith('?') || card.q.includes(':'), `Pas une question : ${card.q}`);
     assert.ok(card.a?.trim(), card.q);
     assert.ok(card.x?.trim(), `Sans explication : ${card.q}`);
+    assert.ok(card.topic?.trim(), `Sans article à approfondir : ${card.q}`);
     assert.equal(card.wrong.length, 3, card.q);
     assert.equal(new Set([card.a, ...card.wrong]).size, 4, `Réponses en double : ${card.q}`);
   }

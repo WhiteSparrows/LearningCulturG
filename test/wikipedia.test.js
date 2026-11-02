@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { maskExtract, isGoodTopic, toCard, fetchWikiCards, refillPool, fetchOnThisDay } from '../www/js/wikipedia.js';
+import { maskExtract, isGoodTopic, toCard, fetchWikiCards, refillPool, fetchOnThisDay, parseArticle, fetchArticle } from '../www/js/wikipedia.js';
 import { DOMAINS } from '../www/js/domains.js';
 import { defaultData } from '../www/js/store.js';
 
@@ -91,7 +91,70 @@ test('la réserve se remplit sans doublon et tolère une panne réseau', async (
 });
 
 test('l\'éphéméride est nettoyée', async () => {
-  const fetchFn = async () => ({ ok: true, json: async () => ({ selected: [{ year: 1930, text: 'Haïlé Sélassié (photo) est sacré.' }, { year: 1930, text: 'Haïlé Sélassié (photo) est sacré.' }] }) });
+  const entry = { year: 1930, text: 'Haïlé Sélassié (photo) est sacré.', pages: [{ title: 'Haïlé_Sélassié_Ier', normalizedtitle: 'Haïlé Sélassié Ier' }] };
+  const fetchFn = async () => ({ ok: true, json: async () => ({ selected: [entry, entry] }) });
   const event = await fetchOnThisDay(new Date(2026, 10, 2), { fetchFn });
-  assert.deepEqual(event, { year: 1930, text: 'Haïlé Sélassié est sacré.' });
+  assert.deepEqual(event, { year: 1930, text: 'Haïlé Sélassié est sacré.', topic: 'Haïlé Sélassié Ier' });
+});
+
+const ARTICLE = [
+  "Une introduction.",
+  '',
+  'Son deuxième paragraphe.',
+  '',
+  '== Histoire ==',
+  'Le début de l\'histoire.',
+  '',
+  '=== Antiquité ===',
+  'Chez les Grecs, la formule',
+  '',
+  '  ',
+  '    ',
+  '      E',
+  '      {\\displaystyle E=mc^{2}}',
+  'reste célèbre.',
+  '',
+  '=== Sous-partie vide ===',
+  '',
+  '== Partie vide ==',
+  '',
+  '== Notes et références ==',
+  'Une note.',
+  '',
+  '=== Liens ===',
+  'Un lien.',
+  '',
+  '== Voir aussi ==',
+  'Autre chose.',
+].join('\n');
+
+test('un article se découpe en introduction et en parties', () => {
+  const { intro, sections } = parseArticle(ARTICLE);
+  assert.deepEqual(intro, ['Une introduction.', 'Son deuxième paragraphe.']);
+  assert.equal(sections.length, 1);
+  assert.equal(sections[0].title, 'Histoire');
+  assert.deepEqual(sections[0].blocks, [
+    { text: 'Le début de l\'histoire.' },
+    { heading: 'Antiquité' },
+    { text: 'Chez les Grecs, la formule' },
+    { text: 'reste célèbre.' },
+  ]);
+});
+
+test('un article récupéré garde son vrai titre après redirection', async () => {
+  const fetchFn = async (url) => {
+    const params = new URL(url).searchParams;
+    assert.equal(params.get('exintro'), null);
+    assert.equal(params.get('exsectionformat'), 'wiki');
+    return { ok: true, json: async () => ({ query: { pages: { 5: { pageid: 5, title: 'Marie Curie', extract: ARTICLE, description: 'physicienne', thumbnail: { source: 'https://img/x.jpg' } } } } }) };
+  };
+  const article = await fetchArticle('Curie', { fetchFn });
+  assert.equal(article.title, 'Marie Curie');
+  assert.equal(article.url, 'https://fr.wikipedia.org/wiki/Marie_Curie');
+  assert.equal(article.intro.length, 2);
+});
+
+test('un article absent déclenche une erreur plutôt qu\'un écran vide', async () => {
+  const fetchFn = async () => ({ ok: true, json: async () => ({ query: { pages: { '-1': { title: 'Rien', missing: true } } } }) });
+  await assert.rejects(fetchArticle('Rien', { fetchFn }), /introuvable/);
 });

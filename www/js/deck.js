@@ -16,6 +16,6 @@ const packs = [histoire, lettres, arts, sciences, societe];
 
 export const DECK = packs.flatMap((pack) =>
   Object.entries(pack).flatMap(([domain, rows]) =>
-    rows.map(([q, a, wrong, x]) => ({ id: `${domain}-${hash(q)}`, domain, q, a, wrong, x }))
+    rows.map(([q, a, wrong, x, topic]) => ({ id: `${domain}-${hash(q)}`, domain, q, a, wrong, x, topic }))
   )
 );

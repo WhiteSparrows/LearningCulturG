@@ -52,6 +52,7 @@ export function toCard(page, domainId) {
     wiki: true,
     q: maskExtract(page.title, extract),
     a: page.title.replace(/\s*\(.*\)$/, ''),
+    topic: page.title,
     x: leadSentences(extract.replace(/\s*\n+\s*/g, ' '), 420),
     description: page.description ?? '',
     image: page.thumbnail?.source ?? '',
@@ -148,6 +149,60 @@ export async function refillPool(data, { target = 15, rng = Math.random, fetchFn
   return added;
 }
 
+const REFERENCE_SECTION = /^(notes?\b|références|voir aussi|bibliographie|liens externes|articles connexes|annexes|sources|webographie|pour approfondir)/i;
+
+// Découpe le texte brut d'un article : l'introduction, puis ses grandes parties.
+export function parseArticle(text) {
+  const intro = [];
+  const sections = [];
+  let current = null;
+  for (const raw of text.split('\n')) {
+    // Les formules sortent en fragments indentés et en LaTeX, illisibles en texte brut.
+    if (/^\s/.test(raw) || raw.includes('\\displaystyle')) continue;
+    const line = raw.trim();
+    if (line.length < 2) continue;
+    const heading = line.match(/^(={2,})\s*(.*?)\s*\1$/);
+    if (heading && heading[1].length === 2) {
+      current = { title: heading[2], blocks: [] };
+      sections.push(current);
+    } else if (heading) {
+      current?.blocks.push({ heading: heading[2] });
+    } else if (current) {
+      current.blocks.push({ text: line });
+    } else {
+      intro.push(line);
+    }
+  }
+  return {
+    intro,
+    sections: sections
+      .filter((s) => !REFERENCE_SECTION.test(s.title))
+      .map((s) => ({ ...s, blocks: s.blocks.filter((b, i) => b.text || s.blocks[i + 1]?.text) }))
+      .filter((s) => s.blocks.length > 0),
+  };
+}
+
+export async function fetchArticle(title, { fetchFn = fetch } = {}) {
+  const json = await query({
+    prop: 'extracts|pageimages|description',
+    explaintext: '1',
+    exsectionformat: 'wiki',
+    piprop: 'thumbnail',
+    pithumbsize: '640',
+    redirects: '1',
+    titles: title,
+  }, fetchFn);
+  const page = Object.values(json.query?.pages ?? {})[0];
+  if (!page?.extract) throw new Error(`Article introuvable : ${title}`);
+  return {
+    title: page.title,
+    description: page.description ?? '',
+    image: page.thumbnail?.source ?? '',
+    url: `https://fr.wikipedia.org/wiki/${encodeURIComponent(page.title.replace(/ /g, '_'))}`,
+    ...parseArticle(page.extract),
+  };
+}
+
 export async function fetchOnThisDay(date = new Date(), { rng = Math.random, fetchFn = fetch } = {}) {
   const mm = String(date.getMonth() + 1).padStart(2, '0');
   const dd = String(date.getDate()).padStart(2, '0');
@@ -157,5 +212,6 @@ export async function fetchOnThisDay(date = new Date(), { rng = Math.random, fet
   if (selected.length === 0) return null;
   const event = selected[Math.floor(rng() * selected.length)];
   const text = event.text.replace(/\s*\(photo\)/g, '').trim();
-  return { year: event.year, text: text[0].toUpperCase() + text.slice(1) };
+  const page = event.pages?.[0];
+  return { year: event.year, text: text[0].toUpperCase() + text.slice(1), topic: page?.normalizedtitle ?? page?.title };
 }

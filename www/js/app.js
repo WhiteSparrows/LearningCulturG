@@ -6,7 +6,7 @@ import {
 } from './session.js';
 import { pickFact, markRead, keepForReview } from './reading.js';
 import { load, save, exportData, importData } from './store.js';
-import { refillPool, fetchOnThisDay, fetchWikiCards } from './wikipedia.js';
+import { refillPool, fetchOnThisDay, fetchWikiCards, fetchArticle } from './wikipedia.js';
 import { canRemind, setReminder } from './platform.js';
 
 const root = document.getElementById('app');
@@ -15,11 +15,13 @@ const MAX_STEP_SECONDS = 90;
 const ACTIVITY_WEEKS = 16;
 const MAX_READ_SECONDS = 240;
 const ARTICLE_WAIT_MS = 2500;
+const MAX_DEEP_SECONDS = 900;
 
 let data = load();
 let screen = 'home';
 let run = null;
 let reading = null;
+let deep = null;
 
 const today = () => dayNumber();
 const allCards = () => [...DECK, ...Object.values(data.wikiCards)];
@@ -80,12 +82,15 @@ function goTo(next, { replace = false } = {}) {
 
 window.addEventListener('popstate', (event) => {
   screen = event.state?.screen ?? 'home';
+  const scrollBack = deep && screen !== 'deep' ? closeDeep() : null;
   if (screen !== 'session') run = null;
   if (screen !== 'reading') stopReading();
   render();
+  if (scrollBack !== null) window.scrollTo(0, scrollBack);
 });
 
 function render() {
+  if (screen === 'deep' && deep) return renderDeep();
   if (screen === 'session' && run) return renderStep();
   if (screen === 'reading' && reading) return renderReading();
   if (screen === 'read') return renderRead();
@@ -173,9 +178,12 @@ function renderEphemeris() {
     h('h2', { class: 'section-title' }, 'Ce jour-là'),
     h('div', { class: 'ephemeris-year' }, String(event.year)),
     h('p', {}, event.text),
-    kept
-      ? h('span', { class: 'card-kind' }, 'Ajouté à tes révisions')
-      : h('button', { class: 'inline-action', onclick: () => keepEphemeris(id, event) }, 'Retenir cette date'),
+    h('div', { class: 'ephemeris-actions' },
+      kept
+        ? h('span', { class: 'card-kind' }, 'Ajouté à tes révisions')
+        : h('button', { class: 'inline-action', onclick: () => keepEphemeris(id, event) }, 'Retenir cette date'),
+      event.topic && h('button', { class: 'inline-action', onclick: () => openDeep(event.topic, 'histoire') }, 'Approfondir'),
+    ),
   );
 }
 
@@ -185,6 +193,7 @@ function keepEphemeris(id, event) {
     q: `En quelle année ? ${event.text}`,
     a: String(event.year),
     x: 'Tiré de l\'éphéméride de Wikipédia.',
+    topic: event.topic,
   };
   data.cards[id] = schedule(undefined, 'good', today());
   persist();
@@ -263,11 +272,17 @@ function explanation(card) {
     card.description && h('p', { class: 'description' }, capitalize(card.description)),
     card.image && h('img', { class: 'card-image', src: card.image, alt: '', loading: 'lazy', onerror: (e) => e.target.remove() }),
     card.x && h('p', { class: 'explain' }, card.x),
+    deepButton(card),
     h('div', { class: 'card-links' },
-      card.url ? h('a', { href: card.url, target: '_blank', rel: 'noopener' }, 'Lire sur Wikipédia') : h('span'),
+      h('span'),
       h('button', { onclick: () => flagCard(card) }, 'Signaler une erreur'),
     ),
   ];
+}
+
+function deepButton(card) {
+  const topic = card.topic ?? (card.url ? card.a : null);
+  return topic && h('button', { class: 'btn btn-ghost deep-button', onclick: () => openDeep(topic, card.domain) }, 'Approfondir');
 }
 
 // La carte signalée sort des révisions, et se rétablit depuis les réglages.
@@ -326,6 +341,7 @@ function stepQcm({ card, first }) {
   });
   const body = [h('p', { class: 'card-kind' }, 'Te souviens-tu ?'), questionNode(card), h('div', { class: 'choices' }, buttons)];
   if (answered && card.x) body.push(h('p', { class: 'explain' }, card.x));
+  if (answered) body.push(deepButton(card));
   return {
     body,
     actions: answered && h('button', {
@@ -575,9 +591,10 @@ function renderReading() {
     h('article', { class: 'card enter', style: hueStyle(card.domain) },
       domainTag(card.domain),
       card.wiki ? readingArticle(card) : readingFact(card),
+      deepButton(card),
       h('div', { class: 'card-links' },
         card.wiki
-          ? h('a', { href: card.url, target: '_blank', rel: 'noopener' }, 'Lire la suite sur Wikipédia')
+          ? h('span')
           : h('button', {
             onclick: () => {
               data.suspended[card.id] = 'flag';
@@ -619,6 +636,75 @@ function readingFact(card) {
     h('h1', { class: 'reading-title' }, card.a),
     h('p', { class: 'explain' }, card.x),
   ];
+}
+
+// ---- Approfondir ----------------------------------------------------------
+
+// S'ouvre par-dessus la carte : à la fermeture, on la retrouve dans le même état.
+function openDeep(topic, domain) {
+  deep = { topic, domain, article: null, failed: false, openedAt: Date.now(), scrollY: window.scrollY };
+  goTo('deep');
+  loadDeep(deep);
+}
+
+async function loadDeep(entry) {
+  entry.failed = false;
+  try {
+    entry.article = await fetchArticle(entry.topic);
+  } catch {
+    entry.failed = true;
+  }
+  if (deep === entry) renderDeep();
+}
+
+// Le temps passé à approfondir compte comme de la lecture : il n'entame ni le budget
+// de la session ni la mesure du rythme, qui repartent comme si l'horloge s'était arrêtée.
+function closeDeep() {
+  const elapsed = Date.now() - deep.openedAt;
+  if (run) run.startedAt += elapsed;
+  if (reading) reading.startedAt += elapsed;
+  if (deep.article) {
+    logDay(data, today(), {});
+    const day = data.daily[today()];
+    day.readSecs = (day.readSecs ?? 0) + Math.min(MAX_DEEP_SECONDS, elapsed / 1000);
+    persist();
+  }
+  const { scrollY } = deep;
+  deep = null;
+  return scrollY;
+}
+
+function deepContent({ article, failed }) {
+  if (failed) {
+    return [
+      h('p', { class: 'explain' }, 'Impossible de charger l\'article. Approfondir demande une connexion.'),
+      h('button', { class: 'btn btn-ghost', onclick: () => { deep.failed = false; renderDeep(); loadDeep(deep); } }, 'Réessayer'),
+    ];
+  }
+  if (!article) return h('p', { class: 'reading-wait' }, 'Je cherche l\'article…');
+  return [
+    article.image && h('img', { class: 'card-image', src: article.image, alt: '', onerror: (e) => e.target.remove() }),
+    h('h1', { class: 'reading-title' }, article.title),
+    article.description && h('p', { class: 'description' }, capitalize(article.description)),
+    article.intro.map((text) => h('p', { class: 'explain' }, text)),
+    article.sections.length > 0 && h('div', { class: 'deep-sections' }, article.sections.map((section) => h('details', {},
+      h('summary', {}, section.title),
+      section.blocks.map((block) => (block.heading
+        ? h('h3', {}, block.heading)
+        : h('p', { class: 'explain' }, block.text))),
+    ))),
+    h('p', { class: 'deep-source' }, 'Source : ', h('a', { href: article.url, target: '_blank', rel: 'noopener' }, 'Wikipédia'), ', licence CC BY-SA'),
+  ];
+}
+
+function renderDeep() {
+  show(h('div', { class: 'session' },
+    h('div', { class: 'session-bar' },
+      h('button', { class: 'close', 'aria-label': 'Fermer l\'article', onclick: () => history.back() }, '×'),
+    ),
+    h('article', { class: 'card', style: hueStyle(deep.domain) }, domainTag(deep.domain), deepContent(deep)),
+    h('div', { class: 'actions' }, h('button', { class: 'btn btn-primary', onclick: () => history.back() }, 'Revenir')),
+  ));
 }
 
 // ---- Domaines -------------------------------------------------------------
@@ -817,7 +903,7 @@ function loadEphemeris() {
 
 // L'app reste ouverte d'un jour à l'autre sur un téléphone : on rafraîchit au retour.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible' || screen === 'session' || screen === 'reading') return;
+  if (document.visibilityState !== 'visible' || ['session', 'reading', 'deep'].includes(screen)) return;
   loadEphemeris();
   render();
 });
