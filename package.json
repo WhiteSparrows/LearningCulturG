@@ -1,0 +1,21 @@
+{
+  "name": "culturg",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "10-15 minutes par jour pour apprendre et retenir la culture générale.",
+  "scripts": {
+    "test": "node --test test/",
+    "dev": "python -m http.server 5173 --directory www",
+    "android:sync": "cap sync android",
+    "android:build": "cap sync android && cd android && gradlew.bat assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.1",
+    "@capacitor/core": "^6.2.1",
+    "@capacitor/local-notifications": "^6.1.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.1"
+  }
+}
