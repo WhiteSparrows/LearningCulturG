@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CulturG</string>
+    <string name="title_activity_main">CulturG</string>
+    <string name="package_name">fr.whitesparrows.culturg</string>
+    <string name="custom_url_scheme">fr.whitesparrows.culturg</string>
+</resources>
