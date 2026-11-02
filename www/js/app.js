@@ -7,7 +7,7 @@ import {
 import { pickFact, markRead, keepForReview } from './reading.js';
 import { load, save, exportData, importData } from './store.js';
 import { refillPool, fetchOnThisDay, fetchWikiCards, fetchArticle } from './wikipedia.js';
-import { canRemind, setReminder } from './platform.js';
+import { canRemind, setReminder, handleBackButton } from './platform.js';
 
 const root = document.getElementById('app');
 const BONUS_SECONDS = 300;
@@ -909,6 +909,9 @@ document.addEventListener('visibilitychange', () => {
 });
 
 history.replaceState({ screen: 'home' }, '');
+handleBackButton();
+// Android annule les alarmes d'une app arrêtée de force : on reprogramme le rappel à chaque ouverture.
+if (data.settings.reminder) setReminder(data.settings.reminder).catch(() => {});
 render();
 refillInBackground();
 loadEphemeris();

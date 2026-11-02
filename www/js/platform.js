@@ -8,6 +8,16 @@ function bridge() {
 
 export const canRemind = () => bridge() !== null;
 
+// Bouton retour d'Android : il remonte l'historique de l'app, et la quitte depuis l'accueil.
+export function handleBackButton() {
+  const cap = bridge();
+  if (!cap) return;
+  cap.nativeCallback('App', 'addListener', { eventName: 'backButton' }, ({ canGoBack }) => {
+    if (canGoBack) history.back();
+    else cap.nativePromise('App', 'exitApp');
+  });
+}
+
 const callNotifications = (method, options = {}) => bridge().nativePromise('LocalNotifications', method, options);
 
 // Renvoie false si la permission est refusée, pour que le réglage reflète la réalité.
