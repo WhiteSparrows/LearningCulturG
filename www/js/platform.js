@@ -1,0 +1,32 @@
+// Rappel quotidien : uniquement dans l'app Android, le navigateur n'en a pas l'équivalent fiable.
+const REMINDER_ID = 1;
+
+function bridge() {
+  const cap = globalThis.Capacitor;
+  return cap?.isNativePlatform?.() ? cap : null;
+}
+
+export const canRemind = () => bridge() !== null;
+
+const callNotifications = (method, options = {}) => bridge().nativePromise('LocalNotifications', method, options);
+
+// Renvoie false si la permission est refusée, pour que le réglage reflète la réalité.
+export async function setReminder(time) {
+  if (!bridge()) return false;
+  await callNotifications('cancel', { notifications: [{ id: REMINDER_ID }] });
+  if (!time) return true;
+
+  const { display } = await callNotifications('requestPermissions');
+  if (display !== 'granted') return false;
+
+  const [hour, minute] = time.split(':').map(Number);
+  await callNotifications('schedule', {
+    notifications: [{
+      id: REMINDER_ID,
+      title: 'Ta session du jour',
+      body: 'Quelques minutes pour retenir, et de quoi découvrir.',
+      schedule: { on: { hour, minute }, allowWhileIdle: true },
+    }],
+  });
+  return true;
+}
