@@ -59,7 +59,13 @@ L'APK se trouve dans `android/app/build/outputs/apk/debug/app-debug.apk`. Pour l
 - **Par câble**, avec le débogage USB activé sur le téléphone : `adb install -r android/app/build/outputs/apk/debug/app-debug.apk`
 - **Sans câble** : copie le fichier sur le téléphone, ouvre-le et autorise l'installation depuis cette source.
 
-Pour conserver ta progression lors d'une mise à jour, installe toujours un APK compilé sur le même PC. Une clé de signature différente oblige à désinstaller, ce qui efface les données. En cas de doute, fais d'abord un export depuis **Réglages > Sauvegarde**.
+Pour conserver ta progression lors d'une mise à jour, installe toujours un APK compilé sur le même PC. Une clé de signature différente oblige à désinstaller l'app, ce qui efface ses données.
+
+## Sauvegarde
+
+L'app copie ta progression dans `Documents/CulturG` du téléphone, à la fin de chaque session ou lecture et au moins une fois par jour. Les 10 fichiers les plus récents sont gardés. Ce dossier survit à une désinstallation : pour tout récupérer, réinstalle l'app et choisis **Réglages > Sauvegarde > Restaurer depuis un fichier**. Avant de remplacer quoi que ce soit, l'app garde une copie de l'état actuel, marquée `avant-restauration`.
+
+Pour ne rien perdre en changeant de téléphone, utilise de temps en temps **Envoyer une copie** vers Drive ou par mail.
 
 ## Développer
 

@@ -7,7 +7,8 @@ import {
 import { pickFact, markRead, keepForReview } from './reading.js';
 import { load, save, exportData, importData } from './store.js';
 import { refillPool, fetchOnThisDay, fetchWikiCards, fetchArticle } from './wikipedia.js';
-import { canRemind, setReminder, handleBackButton } from './platform.js';
+import { canRemind, setReminder, handleBackButton, canSaveFiles, documentsFs, shareFile, downloadFile } from './platform.js';
+import { writeBackup, isWorthSaving, describeTime, backupName, BACKUP_DIR } from './backup.js';
 
 const root = document.getElementById('app');
 const BONUS_SECONDS = 300;
@@ -446,6 +447,7 @@ function renderFinish() {
   logDay(data, today(), {});
   data.daily[today()].done = true;
   persist();
+  autoBackup({ force: true });
   refillInBackground();
   show(h('div', { class: 'finish' },
     h('h1', {}, 'Session terminée'),
@@ -550,6 +552,7 @@ function stopReading() {
   if (!reading) return;
   recordReading();
   reading = null;
+  autoBackup({ force: true });
   refillInBackground();
 }
 
@@ -783,46 +786,88 @@ function reminderSetting() {
   );
 }
 
+function backupStatus() {
+  const { backup } = data;
+  if (!backup) return 'Aucune sauvegarde pour l\'instant : la première sera faite à la fin de ta prochaine session.';
+  if (backup.error) return `La dernière sauvegarde a échoué (${describeTime(backup.at)}). Réessaie avec le bouton ci-dessous.`;
+  return `Dernière sauvegarde ${describeTime(backup.at)}, dans Documents/${BACKUP_DIR}.`;
+}
+
+// Restaurer remplace toute la progression : on demande confirmation et, sur le téléphone,
+// on garde d'abord une copie de l'état actuel, au cas où le mauvais fichier aurait été choisi.
+async function restoreFromFile(file, say) {
+  let restored;
+  try {
+    restored = importData(await file.text());
+  } catch (error) {
+    say(error instanceof SyntaxError ? 'Ce fichier n\'est pas une sauvegarde CulturG.' : error.message, true);
+    return;
+  }
+  const when = restored.savedAt ? ` du ${new Date(restored.savedAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}` : '';
+  const count = Object.keys(restored.cards).length;
+  if (!window.confirm(`Remplacer ta progression actuelle par cette sauvegarde${when} (${plural(count, 'savoir')}) ?`)) return;
+  if (canSaveFiles() && isWorthSaving(data)) {
+    await writeBackup(data, documentsFs, { suffix: 'avant-restauration' }).catch(() => {});
+  }
+  data = restored;
+  persist();
+  await autoBackup({ force: true });
+  if (canRemind()) setReminder(data.settings.reminder).catch(() => {});
+  renderSettings();
+  root.querySelector('.backup-note').textContent = `Sauvegarde restaurée : ${plural(count, 'savoir')} en mémoire.`;
+}
+
 function backupSetting() {
-  const area = h('textarea', { 'aria-label': 'Texte de sauvegarde', placeholder: 'Colle ici une sauvegarde pour la restaurer.', spellcheck: false });
-  const message = h('p', { class: 'message', role: 'status' });
+  const message = h('p', { class: 'message backup-note', role: 'status' });
   const say = (text, isError = false) => {
     message.textContent = text;
-    message.className = `message${isError ? ' error' : ''}`;
+    message.className = `message backup-note${isError ? ' error' : ''}`;
   };
+  const picker = h('input', {
+    type: 'file',
+    hidden: true,
+    onchange: (e) => e.target.files[0] && restoreFromFile(e.target.files[0], say),
+  });
+  const nativeButtons = [
+    h('button', {
+      class: 'btn btn-ghost',
+      onclick: async () => {
+        await autoBackup({ force: true, evenIfEmpty: true });
+        renderSettings();
+      },
+    }, 'Sauvegarder'),
+    h('button', {
+      class: 'btn btn-ghost',
+      onclick: () => shareFile(backupName(new Date()), exportData(data)).catch(() => say('Le partage n\'a pas fonctionné.', true)),
+    }, 'Envoyer une copie'),
+  ];
   return h('section', { class: 'setting' },
     h('h2', {}, 'Sauvegarde'),
-    h('small', {}, 'Ta progression n\'existe que sur ce téléphone. Garde une copie de ce texte dans un endroit sûr.'),
-    area,
-    h('div', { class: 'row' },
-      h('button', {
-        class: 'btn btn-ghost',
-        onclick: async () => {
-          area.value = exportData(data);
-          area.select();
-          try {
-            await navigator.clipboard.writeText(area.value);
-            say('Sauvegarde copiée.');
-          } catch {
-            say('Sélectionne le texte et copie-le à la main.');
-          }
-        },
-      }, 'Exporter'),
-      h('button', {
-        class: 'btn btn-ghost',
-        onclick: () => {
-          try {
-            data = importData(area.value);
-            persist();
-            render();
-          } catch (error) {
-            say(error instanceof SyntaxError ? 'Ce texte ne ressemble pas à une sauvegarde CulturG.' : error.message, true);
-          }
-        },
-      }, 'Restaurer'),
-    ),
+    h('small', {}, canSaveFiles()
+      ? 'Ta progression est copiée automatiquement après chaque session dans le dossier Documents du téléphone. Cette copie reste même si tu désinstalles l\'app. Envoie-en une de temps en temps ailleurs (Drive, mail) pour ne rien perdre en changeant de téléphone.'
+      : 'Dans un navigateur, ta progression n\'existe que dans ce navigateur. Télécharge une sauvegarde de temps en temps.'),
+    canSaveFiles() && h('p', { class: 'backup-status' }, backupStatus()),
+    h('div', { class: 'row' }, canSaveFiles()
+      ? nativeButtons
+      : h('button', { class: 'btn btn-ghost', onclick: () => downloadFile(backupName(new Date()), exportData(data)) }, 'Télécharger une sauvegarde')),
+    h('button', { class: 'btn btn-ghost', onclick: () => picker.click() }, 'Restaurer depuis un fichier'),
+    canSaveFiles() && h('small', {}, `Dans le sélecteur, ouvre le menu ☰, puis le téléphone, Documents et ${BACKUP_DIR}.`),
+    picker,
     message,
   );
+}
+
+// Une sauvegarde par jour au minimum, plus une à la fin de chaque session ou lecture.
+async function autoBackup({ force = false, evenIfEmpty = false } = {}) {
+  if (!canSaveFiles() || (!evenIfEmpty && !isWorthSaving(data))) return;
+  if (!force && data.backup?.day === today() && !data.backup.error) return;
+  try {
+    const name = await writeBackup(data, documentsFs);
+    data.backup = { at: Date.now(), day: today(), name };
+  } catch {
+    data.backup = { at: Date.now(), day: today(), error: true };
+  }
+  persist();
 }
 
 function flaggedSetting() {
@@ -912,6 +957,7 @@ history.replaceState({ screen: 'home' }, '');
 handleBackButton();
 // Android annule les alarmes d'une app arrêtée de force : on reprogramme le rappel à chaque ouverture.
 if (data.settings.reminder) setReminder(data.settings.reminder).catch(() => {});
+autoBackup();
 render();
 refillInBackground();
 loadEphemeris();

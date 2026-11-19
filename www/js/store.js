@@ -39,8 +39,8 @@ export function save(data) {
   }
 }
 
-export function exportData(data) {
-  return JSON.stringify({ ...data, wikiPool: [], onThisDay: null });
+export function exportData(data, now = new Date()) {
+  return JSON.stringify({ ...data, wikiPool: [], onThisDay: null, savedAt: now.toISOString() });
 }
 
 export function importData(text) {
