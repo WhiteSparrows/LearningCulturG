@@ -1,0 +1,11 @@
+{
+  "appId": "fr.whitesparrows.culturg",
+  "appName": "CulturG",
+  "webDir": "www",
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_culturg",
+      "iconColor": "#B4532A"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="culturg_paper">#F5F0E6</color>
+    <color name="culturg_accent">#B4532A</color>
+    <bool name="culturg_light_bars">true</bool>
+</resources>
